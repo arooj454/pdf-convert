@@ -563,62 +563,77 @@ async def pdf_to_word(file: UploadFile = File(...)):
 # ====================================================
 @app.post("/word-to-pdf")
 async def word_to_pdf(file: UploadFile = File(...)):
-    """Convert DOCX to PDF"""
+    """Convert DOCX/DOC to PDF (Windows = docx2pdf, Linux = LibreOffice)"""
+    
     if not validate_file_extension(file.filename, [".docx", ".doc"]):
-        raise HTTPException(status_code=400, detail="Only Word files are allowed")
-    
+        raise HTTPException(status_code=400, detail="Only .docx or .doc files are allowed")
+
+    # Create temp input and output paths
     input_path = get_temp_file(file.filename)
-    base_name = os.path.splitext(os.path.basename(input_path))[0]
-    output_path = os.path.join(UPLOAD_FOLDER, f"{base_name}.pdf")
-    
+    base = os.path.splitext(os.path.basename(input_path))[0]
+    output_path = os.path.join(UPLOAD_FOLDER, f"{base}.pdf")
+
     try:
-        # Save uploaded file
+        # Save uploaded Word file
         content = await file.read()
         with open(input_path, "wb") as f:
             f.write(content)
-        
-        # Convert based on platform
+
+        # If Windows + docx2pdf exists → use it
         if platform.system() == "Windows" and docx2pdf_convert:
-            # Use docx2pdf on Windows
             docx2pdf_convert(input_path, output_path)
+
         else:
-            # Use LibreOffice on Linux/Mac
-            result = subprocess.run([
-                "soffice", "--headless", "--convert-to", "pdf",
-                "--outdir", UPLOAD_FOLDER, input_path
-            ], capture_output=True, text=True, timeout=60)
-            
+            # Use LibreOffice for Linux/Mac (Render / Railway / Koyeb)
+            cmd = [
+                "soffice",
+                "--headless",
+                "--convert-to", "pdf",
+                "--outdir", UPLOAD_FOLDER,
+                input_path
+            ]
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=90
+            )
+
             if result.returncode != 0:
-                raise Exception(f"LibreOffice conversion failed: {result.stderr}")
-        
-        # Verify output file exists
+                raise Exception(f"LibreOffice failed: {result.stderr}")
+
+        # ---- Verify PDF exists ----
         if not os.path.exists(output_path):
-            raise Exception("Output file was not created")
-        
-        # Read output file
+            raise Exception("PDF output not created")
+
+        # ---- Read PDF ----
         with open(output_path, "rb") as f:
-            output_content = f.read()
-        
+            pdf_bytes = f.read()
+
         # Cleanup
         cleanup_file(input_path)
         cleanup_file(output_path)
-        
+
         return StreamingResponse(
-            io.BytesIO(output_content),
+            io.BytesIO(pdf_bytes),
             media_type="application/pdf",
             headers={
-                "Content-Disposition": f"attachment; filename={os.path.basename(file.filename).replace('.docx', '.pdf').replace('.doc', '.pdf')}"
+                "Content-Disposition": f"attachment; filename={file.filename.rsplit('.',1)[0]}.pdf"
             }
         )
+
     except subprocess.TimeoutExpired:
         cleanup_file(input_path)
         cleanup_file(output_path)
-        raise HTTPException(status_code=500, detail="Conversion timeout - file too large")
+        raise HTTPException(status_code=500, detail="Conversion timeout")
+
     except Exception as e:
         cleanup_file(input_path)
         cleanup_file(output_path)
-        logger.error(f"Word to PDF conversion error: {e}")
+        logger.error(f"Word→PDF error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Conversion failed: {str(e)}")
+
 
 # ====================================================
 #                   ROUTE: LOCK FILE
@@ -747,4 +762,5 @@ if __name__ == "__main__":
         port=8000,
         reload=True,
         log_level="info"
+
     )
