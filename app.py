@@ -561,6 +561,7 @@ async def pdf_to_word(file: UploadFile = File(...)):
 # ====================================================
 #                   ROUTES: WORD → PDF
 # ====================================================
+
 @app.post("/word-to-pdf")
 async def word_to_pdf(file: UploadFile = File(...)):
     """Convert DOCX to PDF"""
@@ -577,27 +578,95 @@ async def word_to_pdf(file: UploadFile = File(...)):
         with open(input_path, "wb") as f:
             f.write(content)
         
+        logger.info(f"Converting {input_path} to PDF")
+        logger.info(f"Input file size: {len(content)} bytes")
+        
         # Convert based on platform
         if platform.system() == "Windows" and docx2pdf_convert:
             # Use docx2pdf on Windows
             docx2pdf_convert(input_path, output_path)
         else:
-            # Use LibreOffice on Linux/Mac
-            result = subprocess.run([
-                "soffice", "--headless", "--convert-to", "pdf",
-                "--outdir", UPLOAD_FOLDER, input_path
-            ], capture_output=True, text=True, timeout=60)
+            # Enhanced environment for LibreOffice
+            libreoffice_env = os.environ.copy()
+            libreoffice_env.update({
+                'HOME': '/tmp',
+                'TMPDIR': '/tmp',
+                'TEMP': '/tmp',
+                'TMP': '/tmp'
+            })
+            
+            # First, try to verify LibreOffice is working
+            test_cmd = ["soffice", "--headless", "--version"]
+            test_result = subprocess.run(
+                test_cmd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=libreoffice_env
+            )
+            logger.info(f"LibreOffice test: {test_result.stdout}")
+            
+            # Use LibreOffice with comprehensive flags
+            cmd = [
+                "soffice",
+                "--headless",
+                "--invisible",
+                "--nodefault",
+                "--nofirststartwizard",
+                "--nolockcheck",
+                "--nologo",
+                "--norestore",
+                "-env:UserInstallation=file:///tmp/libreoffice",
+                "--convert-to", "pdf:writer_pdf_Export",
+                "--outdir", UPLOAD_FOLDER,
+                input_path
+            ]
+            
+            logger.info(f"Running LibreOffice command: {' '.join(cmd)}")
+            
+            # Run conversion with extended timeout
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=libreoffice_env,
+                cwd=UPLOAD_FOLDER
+            )
+            
+            logger.info(f"LibreOffice return code: {result.returncode}")
+            logger.info(f"LibreOffice stdout: {result.stdout}")
+            
+            if result.stderr:
+                logger.error(f"LibreOffice stderr: {result.stderr}")
             
             if result.returncode != 0:
-                raise Exception(f"LibreOffice conversion failed: {result.stderr}")
+                error_msg = result.stderr if result.stderr else "Unknown error"
+                raise Exception(f"LibreOffice failed with code {result.returncode}: {error_msg}")
+        
+        # Wait a moment for file to be written
+        import time
+        time.sleep(0.5)
+        
+        # List all files in output directory for debugging
+        all_files = os.listdir(UPLOAD_FOLDER)
+        logger.info(f"Files in upload folder: {all_files}")
         
         # Verify output file exists
         if not os.path.exists(output_path):
-            raise Exception("Output file was not created")
+            # Try to find the PDF file with different naming
+            pdf_files = [f for f in all_files if f.endswith('.pdf') and base_name in f]
+            if pdf_files:
+                output_path = os.path.join(UPLOAD_FOLDER, pdf_files[0])
+                logger.info(f"Found PDF at alternate path: {output_path}")
+            else:
+                raise Exception(f"Output PDF not created. Expected: {output_path}, Available files: {all_files}")
         
         # Read output file
         with open(output_path, "rb") as f:
             output_content = f.read()
+        
+        logger.info(f"Successfully converted to PDF, size: {len(output_content)} bytes")
         
         # Cleanup
         cleanup_file(input_path)
@@ -613,11 +682,12 @@ async def word_to_pdf(file: UploadFile = File(...)):
     except subprocess.TimeoutExpired:
         cleanup_file(input_path)
         cleanup_file(output_path)
-        raise HTTPException(status_code=500, detail="Conversion timeout - file too large")
+        logger.error("LibreOffice conversion timeout")
+        raise HTTPException(status_code=500, detail="Conversion timeout - file too large or LibreOffice is not responding")
     except Exception as e:
         cleanup_file(input_path)
         cleanup_file(output_path)
-        logger.error(f"Word to PDF conversion error: {e}")
+        logger.error(f"Word to PDF conversion error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Conversion failed: {str(e)}")
 
 # ====================================================
