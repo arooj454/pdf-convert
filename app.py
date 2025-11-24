@@ -563,9 +563,15 @@ async def pdf_to_word(file: UploadFile = File(...)):
 # ====================================================
 # Replace the word_to_pdf function in app.py with this:
 
+
+# Add pypandoc import at the top of your app.py
+import pypandoc
+
+# Replace the word_to_pdf function with this lighter version:
+
 @app.post("/word-to-pdf")
 async def word_to_pdf(file: UploadFile = File(...)):
-    """Convert DOCX to PDF"""
+    """Convert DOCX to PDF using Pandoc"""
     if not validate_file_extension(file.filename, [".docx", ".doc"]):
         raise HTTPException(status_code=400, detail="Only Word files are allowed")
     
@@ -579,58 +585,20 @@ async def word_to_pdf(file: UploadFile = File(...)):
         with open(input_path, "wb") as f:
             f.write(content)
         
-        logger.info(f"Converting {input_path} to PDF")
+        logger.info(f"Converting {input_path} to PDF using Pandoc")
         logger.info(f"Input file size: {len(content)} bytes")
         
-        # Setup environment
-        env = os.environ.copy()
-        env['HOME'] = '/tmp'
-        
-        # LibreOffice command
-        cmd = [
-            "libreoffice",
-            "--headless",
-            "--convert-to", "pdf",
-            "--outdir", UPLOAD_FOLDER,
-            input_path
-        ]
-        
-        logger.info(f"Running: {' '.join(cmd)}")
-        
-        # Run conversion
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=120,
-            env=env
+        # Convert using pypandoc (lighter than LibreOffice)
+        pypandoc.convert_file(
+            input_path,
+            'pdf',
+            outputfile=output_path,
+            extra_args=['--pdf-engine=wkhtmltopdf']
         )
-        
-        logger.info(f"Return code: {result.returncode}")
-        logger.info(f"Stdout: {result.stdout}")
-        
-        if result.stderr:
-            logger.warning(f"Stderr: {result.stderr}")
-        
-        if result.returncode != 0:
-            raise Exception(f"LibreOffice failed with code {result.returncode}")
-        
-        # Wait for file to be written
-        import time
-        time.sleep(1)
         
         # Check if output exists
         if not os.path.exists(output_path):
-            all_files = os.listdir(UPLOAD_FOLDER)
-            logger.error(f"Files in folder: {all_files}")
-            
-            # Try to find PDF with similar name
-            pdf_files = [f for f in all_files if f.endswith('.pdf')]
-            if pdf_files:
-                output_path = os.path.join(UPLOAD_FOLDER, pdf_files[0])
-                logger.info(f"Found PDF: {output_path}")
-            else:
-                raise Exception(f"PDF not created. Files: {all_files}")
+            raise Exception("PDF not created")
         
         # Read output file
         with open(output_path, "rb") as f:
@@ -650,36 +618,12 @@ async def word_to_pdf(file: UploadFile = File(...)):
             }
         )
         
-    except subprocess.TimeoutExpired:
-        cleanup_file(input_path)
-        cleanup_file(output_path)
-        raise HTTPException(status_code=500, detail="Conversion timeout")
     except Exception as e:
         cleanup_file(input_path)
         cleanup_file(output_path)
         logger.error(f"Conversion error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Conversion failed: {str(e)}")
 
-
-# Add test endpoint
-@app.get("/test-libreoffice")
-def test_libreoffice():
-    """Test LibreOffice"""
-    try:
-        result = subprocess.run(
-            ["libreoffice", "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env={'HOME': '/tmp'}
-        )
-        return {
-            "status": "ok" if result.returncode == 0 else "error",
-            "output": result.stdout,
-            "error": result.stderr
-        }
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
 # ====================================================
 #                   ROUTE: LOCK FILE
 # ====================================================
