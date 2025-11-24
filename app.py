@@ -1,9 +1,11 @@
 from flask import Flask, request, send_file
+from flask_cors import CORS
 import subprocess
 import os
 import tempfile
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
 def convert_to_pdf(input_path):
     output_path = input_path.rsplit('.', 1)[0] + ".pdf"
@@ -13,7 +15,7 @@ def convert_to_pdf(input_path):
 
 @app.route('/convert', methods=['POST'])
 def convert():
-    file = request.files['file']
+    file = request.files.get('file')
     if not file:
         return "No file uploaded", 400
 
@@ -28,4 +30,3 @@ def convert():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000)
-
