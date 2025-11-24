@@ -1,30 +1,33 @@
 # Use Python 3.11 slim image
 FROM python:3.11-slim
 
+# Set working directory
 WORKDIR /app
 
-ENV HOME=/tmp
-ENV PYTHONUNBUFFERED=1
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install pandoc and wkhtmltopdf (lighter than LibreOffice)
+# Install system dependencies including LibreOffice for Linux
 RUN apt-get update && apt-get install -y \
-    pandoc \
-    wkhtmltopdf \
-    fonts-liberation \
+    libreoffice \
+    libreoffice-writer \
+    libreoffice-calc \
+    libreoffice-impress \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /tmp && chmod -R 777 /tmp
-
+# Copy requirements first for better caching
 COPY requirements.txt .
+
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install additional requirement for docx handling
-RUN pip install --no-cache-dir pypandoc
+# Copy application code
+COPY . .
 
-COPY app.py .
-
+# Expose port
 EXPOSE 8000
 
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/health')"
+
+# Run the application
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]

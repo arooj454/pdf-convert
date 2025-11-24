@@ -561,17 +561,9 @@ async def pdf_to_word(file: UploadFile = File(...)):
 # ====================================================
 #                   ROUTES: WORD → PDF
 # ====================================================
-# Replace the word_to_pdf function in app.py with this:
-
-
-# Add pypandoc import at the top of your app.py
-import pypandoc
-
-# Replace the word_to_pdf function with this lighter version:
-
 @app.post("/word-to-pdf")
 async def word_to_pdf(file: UploadFile = File(...)):
-    """Convert DOCX to PDF using Pandoc"""
+    """Convert DOCX to PDF"""
     if not validate_file_extension(file.filename, [".docx", ".doc"]):
         raise HTTPException(status_code=400, detail="Only Word files are allowed")
     
@@ -585,26 +577,27 @@ async def word_to_pdf(file: UploadFile = File(...)):
         with open(input_path, "wb") as f:
             f.write(content)
         
-        logger.info(f"Converting {input_path} to PDF using Pandoc")
-        logger.info(f"Input file size: {len(content)} bytes")
+        # Convert based on platform
+        if platform.system() == "Windows" and docx2pdf_convert:
+            # Use docx2pdf on Windows
+            docx2pdf_convert(input_path, output_path)
+        else:
+            # Use LibreOffice on Linux/Mac
+            result = subprocess.run([
+                "soffice", "--headless", "--convert-to", "pdf",
+                "--outdir", UPLOAD_FOLDER, input_path
+            ], capture_output=True, text=True, timeout=60)
+            
+            if result.returncode != 0:
+                raise Exception(f"LibreOffice conversion failed: {result.stderr}")
         
-        # Convert using pypandoc (lighter than LibreOffice)
-        pypandoc.convert_file(
-            input_path,
-            'pdf',
-            outputfile=output_path,
-            extra_args=['--pdf-engine=wkhtmltopdf']
-        )
-        
-        # Check if output exists
+        # Verify output file exists
         if not os.path.exists(output_path):
-            raise Exception("PDF not created")
+            raise Exception("Output file was not created")
         
         # Read output file
         with open(output_path, "rb") as f:
             output_content = f.read()
-        
-        logger.info(f"PDF created: {len(output_content)} bytes")
         
         # Cleanup
         cleanup_file(input_path)
@@ -617,11 +610,14 @@ async def word_to_pdf(file: UploadFile = File(...)):
                 "Content-Disposition": f"attachment; filename={os.path.basename(file.filename).replace('.docx', '.pdf').replace('.doc', '.pdf')}"
             }
         )
-        
+    except subprocess.TimeoutExpired:
+        cleanup_file(input_path)
+        cleanup_file(output_path)
+        raise HTTPException(status_code=500, detail="Conversion timeout - file too large")
     except Exception as e:
         cleanup_file(input_path)
         cleanup_file(output_path)
-        logger.error(f"Conversion error: {e}", exc_info=True)
+        logger.error(f"Word to PDF conversion error: {e}")
         raise HTTPException(status_code=500, detail=f"Conversion failed: {str(e)}")
 
 # ====================================================
