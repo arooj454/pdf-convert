@@ -1,19 +1,8 @@
-# FastAPI and server
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
 python-multipart==0.0.20
-
-# PDF processing
 PyPDF2==3.0.1
 pdf2docx==0.5.8
-
-# Office file processing
 msoffcrypto-tool==5.4.2
 python-pptx==1.0.2
 openpyxl==3.1.5
-
-# Windows only (for DOCX to PDF on Windows)
-docx2pdf==0.1.8  # Uncomment for Windows deployment
-
-# Additional utilities
-python-dotenv==1.0.1
