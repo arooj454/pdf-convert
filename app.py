@@ -601,7 +601,7 @@ async def word_to_pdf(file: UploadFile = File(...)):
             )
 
             if result.returncode != 0:
-                raise Exception(f"LibreOffice failed: {result.stderr}")
+                raise Exception(f"LibreOffice conversion failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
 
         # ---- Verify PDF exists ----
         if not os.path.exists(output_path):
@@ -764,3 +764,4 @@ if __name__ == "__main__":
         log_level="info"
 
     )
+
