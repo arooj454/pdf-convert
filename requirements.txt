@@ -12,6 +12,7 @@ python-multipart
 Pillow
 openpyxl
 pymupdf
+pytesseract
 
 
 
