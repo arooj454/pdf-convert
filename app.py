@@ -17,7 +17,7 @@ from pptx import Presentation
 from fastapi.responses import JSONResponse
 from PIL import Image
 import pytesseract
-import io
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -316,6 +316,7 @@ async def unlock_file(file: UploadFile = File(...), password: str = Form(...)):
 
 
 #---- image-to-text
+# ---- image-to-text improved
 @app.post("/image-to-text")
 async def image_to_text(file: UploadFile = File(...)):
     allowed_extensions = [".jpg", ".jpeg", ".png", ".webp", ".tiff", ".bmp"]
@@ -327,14 +328,23 @@ async def image_to_text(file: UploadFile = File(...)):
 
     try:
         content = await file.read()
-        image = Image.open(io.BytesIO(content)).convert("L")  # Convert to grayscale for better OCR
+        # Open image and convert to numpy array
+        image = Image.open(io.BytesIO(content)).convert("RGB")
+        img_np = np.array(image)
 
-        # Perform OCR with pytesseract
-        text = pytesseract.image_to_string(image)
+        # Preprocessing for better OCR
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)   # Grayscale
+        # Apply thresholding to remove noise
+        thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+        # Optional: Dilate to connect broken text
+        kernel = np.ones((1, 1), np.uint8)
+        processed = cv2.dilate(thresh, kernel, iterations=1)
 
-        # Clean extracted text
+        # OCR with pytesseract
+        custom_config = r'--oem 3 --psm 6'  # LSTM OCR, assume a single uniform block of text
+        text = pytesseract.image_to_string(processed, config=custom_config)
+
         cleaned_text = text.replace("\x0c", "").strip()
-
         logging.info(f"Extracted text from {file.filename}")
 
         return JSONResponse({"filename": file.filename, "text": cleaned_text})
@@ -370,6 +380,7 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
+
 
 
 
