@@ -9,3 +9,6 @@ openpyxl
 python-pptx
 docx2pdf
 python-multipart
+Pillow
+openpyxl
+
