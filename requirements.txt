@@ -11,4 +11,7 @@ docx2pdf
 python-multipart
 Pillow
 openpyxl
+pymupdf
+
+
 
