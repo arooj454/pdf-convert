@@ -12,6 +12,5 @@ python-multipart
 Pillow
 openpyxl
 pymupdf
-pytesseract
-opencv-python
+
 
