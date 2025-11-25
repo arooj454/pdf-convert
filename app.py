@@ -16,7 +16,6 @@ import msoffcrypto
 from pptx import Presentation
 from fastapi.responses import JSONResponse
 from PIL import Image
-import pytesseract
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -312,46 +311,6 @@ async def unlock_file(file: UploadFile = File(...), password: str = Form(...)):
     except Exception as e:
         logger.error(f"Unlock file error: {e}")
         raise HTTPException(status_code=500, detail="Invalid password or corrupted file")
-
-
-
-#---- image-to-text
-# ---- image-to-text improved
-@app.post("/image-to-text")
-async def image_to_text(file: UploadFile = File(...)):
-    allowed_extensions = [".jpg", ".jpeg", ".png", ".webp", ".tiff", ".bmp"]
-    ext = os.path.splitext(file.filename)[1].lower()
-
-    if ext not in allowed_extensions:
-        logging.warning(f"Unsupported file type: {file.filename}")
-        raise HTTPException(status_code=400, detail="Unsupported file type")
-
-    try:
-        content = await file.read()
-        # Open image and convert to numpy array
-        image = Image.open(io.BytesIO(content)).convert("RGB")
-        img_np = np.array(image)
-
-        # Preprocessing for better OCR
-        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)   # Grayscale
-        # Apply thresholding to remove noise
-        thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-        # Optional: Dilate to connect broken text
-        kernel = np.ones((1, 1), np.uint8)
-        processed = cv2.dilate(thresh, kernel, iterations=1)
-
-        # OCR with pytesseract
-        custom_config = r'--oem 3 --psm 6'  # LSTM OCR, assume a single uniform block of text
-        text = pytesseract.image_to_string(processed, config=custom_config)
-
-        cleaned_text = text.replace("\x0c", "").strip()
-        logging.info(f"Extracted text from {file.filename}")
-
-        return JSONResponse({"filename": file.filename, "text": cleaned_text})
-
-    except Exception as e:
-        logging.error(f"Error processing file {file.filename}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to extract text: {str(e)}")
 # ======== Health check routes ========
 @app.get("/")
 def home():
@@ -380,6 +339,7 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
+
 
 
 
