@@ -14,7 +14,10 @@ from PyPDF2 import PdfReader, PdfWriter
 from pdf2docx import Converter
 import msoffcrypto
 from pptx import Presentation
-
+from fastapi.responses import JSONResponse
+from PIL import Image
+import pytesseract
+import io
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -310,6 +313,27 @@ async def unlock_file(file: UploadFile = File(...), password: str = Form(...)):
         logger.error(f"Unlock file error: {e}")
         raise HTTPException(status_code=500, detail="Invalid password or corrupted file")
 
+
+
+#---- image-to-text
+@app.post("/image-to-text")
+async def image_to_text(file: UploadFile = File(...)):
+    # Allow common image formats
+    allowed_extensions = [".jpg", ".jpeg", ".png", ".webp", ".tiff", ".bmp"]
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in allowed_extensions:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.filename}")
+
+    try:
+        content = await file.read()
+        image = Image.open(io.BytesIO(content))
+
+        # Use pytesseract to extract text
+        extracted_text = pytesseract.image_to_string(image)
+
+        return JSONResponse({"filename": file.filename, "text": extracted_text})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to extract text: {str(e)}")
 # ======== Health check routes ========
 @app.get("/")
 def home():
@@ -338,5 +362,6 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
+
 
 
