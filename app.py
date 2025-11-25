@@ -9,10 +9,10 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+
 from PyPDF2 import PdfReader, PdfWriter
 from pdf2docx import Converter
 import msoffcrypto
-from openpyxl import load_workbook
 from pptx import Presentation
 
 # Configure logging
@@ -26,7 +26,10 @@ except ImportError:
     docx2pdf_convert = None
     logger.warning("docx2pdf not available - will use LibreOffice if available")
 
-# Lifespan context for startup/shutdown
+# Temporary upload folder
+UPLOAD_FOLDER = os.path.join(tempfile.gettempdir(), "file_converter_uploads")
+
+# Lifespan context for startup/shutdown events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -43,7 +46,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Enable CORS for all origins
+# CORS config - adjust origins in production
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -51,10 +54,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Temporary upload folder
-UPLOAD_FOLDER = os.path.join(tempfile.gettempdir(), "file_converter_uploads")
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Utility functions
 def get_temp_file(filename: str) -> str:
@@ -74,7 +73,7 @@ def validate_file_extension(filename: str, allowed_extensions: list) -> bool:
     ext = os.path.splitext(filename)[1].lower()
     return ext in allowed_extensions
 
-# PDF Lock and Unlock functions (same as before)
+# PDF functions - lock/unlock
 def lock_pdf(file_bytes: bytes, password: str) -> io.BytesIO:
     try:
         reader = PdfReader(io.BytesIO(file_bytes))
@@ -93,8 +92,9 @@ def lock_pdf(file_bytes: bytes, password: str) -> io.BytesIO:
 def unlock_pdf(file_bytes: bytes, password: str) -> io.BytesIO:
     try:
         reader = PdfReader(io.BytesIO(file_bytes))
-        if reader.is_encrypted and not reader.decrypt(password):
-            raise HTTPException(status_code=401, detail="Invalid password")
+        if reader.is_encrypted:
+            if not reader.decrypt(password):
+                raise HTTPException(status_code=401, detail="Invalid password")
         writer = PdfWriter()
         for page in reader.pages:
             writer.add_page(page)
@@ -108,7 +108,7 @@ def unlock_pdf(file_bytes: bytes, password: str) -> io.BytesIO:
         logger.error(f"Error unlocking PDF: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to unlock PDF: {str(e)}")
 
-# Office file lock/unlock using msoffcrypto (same as before)
+# Office file lock/unlock (Word, Excel)
 def lock_office_file(file_bytes: bytes, password: str) -> io.BytesIO:
     try:
         input_stream = io.BytesIO(file_bytes)
@@ -134,7 +134,7 @@ def unlock_office_file(file_bytes: bytes, password: str) -> io.BytesIO:
         logger.error(f"Error unlocking Office file: {e}")
         raise HTTPException(status_code=401, detail="Invalid password or corrupted file")
 
-# PowerPoint lock/unlock (same as before)
+# PowerPoint lock/unlock
 def lock_ppt(file_bytes: bytes, password: str) -> io.BytesIO:
     try:
         input_stream = io.BytesIO(file_bytes)
@@ -160,13 +160,49 @@ def unlock_ppt(file_bytes: bytes, password: str) -> io.BytesIO:
         logger.error(f"Error unlocking PowerPoint: {e}")
         raise HTTPException(status_code=401, detail="Invalid password or corrupted file")
 
-# Route: PDF to Word (same as before)
+# ======== Photo to PDF route ========
+from PIL import Image
+
+@app.post("/photo-to-pdf")
+async def photo_to_pdf(files: list[UploadFile] = File(...)):
+    allowed = [".jpg", ".jpeg", ".png", ".webp"]
+    if not files or len(files) == 0:
+        raise HTTPException(status_code=400, detail="Please upload at least one image.")
+    images = []
+    try:
+        for file in files:
+            ext = os.path.splitext(file.filename)[1].lower()
+            if ext not in allowed:
+                raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.filename}")
+            content = await file.read()
+            img = Image.open(io.BytesIO(content)).convert("RGB")
+            images.append(img)
+        output_pdf = io.BytesIO()
+        images[0].save(
+            output_pdf,
+            format="PDF",
+            save_all=True,
+            append_images=images[1:] if len(images) > 1 else None,
+        )
+        output_pdf.seek(0)
+        return StreamingResponse(
+            output_pdf,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=photos_converted.pdf"},
+        )
+    except Exception as e:
+        logger.error(f"Photo to PDF Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to convert images: {str(e)}")
+
+# ======== PDF to Word route ========
 @app.post("/pdf-to-word")
 async def pdf_to_word(file: UploadFile = File(...)):
     if not validate_file_extension(file.filename, [".pdf"]):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
     input_path = get_temp_file(file.filename)
     output_path = input_path.replace(".pdf", ".docx")
+
     try:
         content = await file.read()
         with open(input_path, "wb") as f:
@@ -181,7 +217,9 @@ async def pdf_to_word(file: UploadFile = File(...)):
         return StreamingResponse(
             io.BytesIO(output_content),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": f"attachment; filename={os.path.basename(file.filename).replace('.pdf', '.docx')}"}
+            headers={
+                "Content-Disposition": f"attachment; filename={os.path.basename(file.filename).replace('.pdf', '.docx')}"
+            }
         )
     except Exception as e:
         cleanup_file(input_path)
@@ -189,52 +227,16 @@ async def pdf_to_word(file: UploadFile = File(...)):
         logger.error(f"PDF to Word conversion error: {e}")
         raise HTTPException(status_code=500, detail=f"Conversion failed: {str(e)}")
 
-# Replaced Route: Word to PDF
-@app.post("/word-to-pdf")
-async def word_to_pdf(file: UploadFile = File(...)):
-    if not validate_file_extension(file.filename, [".docx", ".doc"]):
-        raise HTTPException(status_code=400, detail="Only Word files are allowed")
-    input_path = get_temp_file(file.filename)
-    base_name = os.path.splitext(os.path.basename(input_path))[0]
-    output_path = os.path.join(UPLOAD_FOLDER, f"{base_name}.pdf")
-    content = await file.read()
-    with open(input_path, "wb") as f:
-        f.write(content)
-    try:
-        command = [
-            "libreoffice", "--headless", "--convert-to", "pdf",
-            input_path, "--outdir", UPLOAD_FOLDER
-        ]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
-        if result.returncode != 0:
-            raise Exception(f"LibreOffice conversion failed: {result.stderr}")
-        if not os.path.exists(output_path):
-            raise Exception("Output file was not created")
-        with open(output_path, "rb") as f:
-            output_content = f.read()
-        return StreamingResponse(
-            io.BytesIO(output_content),
-            media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename={base_name}.pdf"}
-        )
-    except subprocess.TimeoutExpired:
-        cleanup_file(input_path)
-        cleanup_file(output_path)
-        raise HTTPException(status_code=500, detail="Conversion timeout - file too large")
-    except Exception as e:
-        cleanup_file(input_path)
-        cleanup_file(output_path)
-        logger.error(f"Word to PDF conversion error: {e}")
-        raise HTTPException(status_code=500, detail=f"Conversion failed: {str(e)}")
-
-# Route: Lock file
+# ======== Lock file route ========
 @app.post("/lock")
 async def lock_file(file: UploadFile = File(...), password: str = Form(...)):
     if not password or len(password) < 4:
         raise HTTPException(status_code=400, detail="Password must be at least 4 characters")
+
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in [".pdf", ".docx", ".xlsx", ".pptx"]:
         raise HTTPException(status_code=400, detail="Unsupported file type. Allowed: PDF, DOCX, XLSX, PPTX")
+
     try:
         content = await file.read()
         if ext == ".pdf":
@@ -249,6 +251,7 @@ async def lock_file(file: UploadFile = File(...), password: str = Form(...)):
             out = lock_ppt(content, password)
             media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
             new_filename = file.filename.replace(".pptx", "_locked.pptx")
+
         return StreamingResponse(
             out,
             media_type=media_type,
@@ -260,14 +263,16 @@ async def lock_file(file: UploadFile = File(...), password: str = Form(...)):
         logger.error(f"Lock file error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to lock file: {str(e)}")
 
-# Route: Unlock file
+# ======== Unlock file route ========
 @app.post("/unlock")
 async def unlock_file(file: UploadFile = File(...), password: str = Form(...)):
     if not password:
         raise HTTPException(status_code=400, detail="Password is required")
+
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in [".pdf", ".docx", ".xlsx", ".pptx"]:
         raise HTTPException(status_code=400, detail="Unsupported file type")
+
     try:
         content = await file.read()
         if ext == ".pdf":
@@ -282,6 +287,7 @@ async def unlock_file(file: UploadFile = File(...), password: str = Form(...)):
             out = unlock_ppt(content, password)
             media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
             new_filename = file.filename.replace("_locked", "_unlocked")
+
         return StreamingResponse(
             out,
             media_type=media_type,
@@ -293,7 +299,7 @@ async def unlock_file(file: UploadFile = File(...), password: str = Form(...)):
         logger.error(f"Unlock file error: {e}")
         raise HTTPException(status_code=500, detail="Invalid password or corrupted file")
 
-# Health check route
+# ======== Health check routes ========
 @app.get("/")
 def home():
     return {
@@ -302,9 +308,9 @@ def home():
         "platform": platform.system(),
         "endpoints": {
             "pdf_to_word": "/pdf-to-word",
-            "word_to_pdf": "/word-to-pdf",
             "lock": "/lock",
-            "unlock": "/unlock"
+            "unlock": "/unlock",
+            "photo_to_pdf": "/photo-to-pdf"
         }
     }
 
@@ -320,10 +326,4 @@ def health_check():
 # Run app
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "app:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
