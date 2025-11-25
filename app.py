@@ -316,33 +316,31 @@ async def unlock_file(file: UploadFile = File(...), password: str = Form(...)):
 
 
 #---- image-to-text
-
-
 @app.post("/image-to-text")
 async def image_to_text(file: UploadFile = File(...)):
     allowed_extensions = [".jpg", ".jpeg", ".png", ".webp", ".tiff", ".bmp"]
     ext = os.path.splitext(file.filename)[1].lower()
 
     if ext not in allowed_extensions:
-        logging.warning(f"Unsupported file type attempted: {file.filename}")
-        raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.filename}")
+        logging.warning(f"Unsupported file type: {file.filename}")
+        raise HTTPException(status_code=400, detail="Unsupported file type")
 
     try:
         content = await file.read()
-        image = Image.open(io.BytesIO(content)).convert("L")  # convert to grayscale for better OCR
+        image = Image.open(io.BytesIO(content)).convert("L")  # Convert to grayscale for better OCR
 
-        # Extract text from image using pytesseract
-        extracted_text = pytesseract.image_to_string(image)
+        # Perform OCR with pytesseract
+        text = pytesseract.image_to_string(image)
 
-        # Clean text
-        cleaned_text = extracted_text.replace("\x0c", "").strip()
+        # Clean extracted text
+        cleaned_text = text.replace("\x0c", "").strip()
 
-        logging.info(f"Extracted text from file {file.filename} successfully.")
-        
+        logging.info(f"Extracted text from {file.filename}")
+
         return JSONResponse({"filename": file.filename, "text": cleaned_text})
 
     except Exception as e:
-        logging.error(f"Error processing file {file.filename} - {str(e)}")
+        logging.error(f"Error processing file {file.filename}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to extract text: {str(e)}")
 # ======== Health check routes ========
 @app.get("/")
@@ -372,6 +370,7 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
+
 
 
 
