@@ -317,18 +317,32 @@ async def unlock_file(file: UploadFile = File(...), password: str = Form(...)):
 
 #---- image-to-text
 
+
 @app.post("/image-to-text")
 async def image_to_text(file: UploadFile = File(...)):
     allowed_extensions = [".jpg", ".jpeg", ".png", ".webp", ".tiff", ".bmp"]
     ext = os.path.splitext(file.filename)[1].lower()
+
     if ext not in allowed_extensions:
+        logging.warning(f"Unsupported file type attempted: {file.filename}")
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.filename}")
+
     try:
         content = await file.read()
-        image = Image.open(io.BytesIO(content))
+        image = Image.open(io.BytesIO(content)).convert("L")  # convert to grayscale for better OCR
+
+        # Extract text from image using pytesseract
         extracted_text = pytesseract.image_to_string(image)
-        return JSONResponse({"filename": file.filename, "text": extracted_text})
+
+        # Clean text
+        cleaned_text = extracted_text.replace("\x0c", "").strip()
+
+        logging.info(f"Extracted text from file {file.filename} successfully.")
+        
+        return JSONResponse({"filename": file.filename, "text": cleaned_text})
+
     except Exception as e:
+        logging.error(f"Error processing file {file.filename} - {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to extract text: {str(e)}")
 # ======== Health check routes ========
 @app.get("/")
@@ -358,6 +372,7 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
+
 
 
 
