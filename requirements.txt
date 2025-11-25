@@ -13,6 +13,5 @@ Pillow
 openpyxl
 pymupdf
 pytesseract
-
-
+opencv-python
 
