@@ -199,44 +199,44 @@ async def photo_to_pdf(files: list[UploadFile] = File(...)):
 # ====================================================
 @app.post("/pdf-to-word")
 async def pdf_to_word(file: UploadFile = File(...)):
-    """Convert PDF to DOCX"""
+    """
+    Convert PDF to DOCX.
+    Note: Requires PyMuPDF pinned to version 1.26.4 to avoid 'Rect' attribute error.
+    """
     if not validate_file_extension(file.filename, [".pdf"]):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
-    
+
     input_path = get_temp_file(file.filename)
     output_path = input_path.replace(".pdf", ".docx")
-    
+
     try:
-        # Save uploaded file
         content = await file.read()
         with open(input_path, "wb") as f:
             f.write(content)
-        
-        # Convert PDF to DOCX
-        cv = Converter(input_path)
+
+        cv = Converter(input_path)  # uses pdf2docx which depends on PyMuPDF
         cv.convert(output_path)
         cv.close()
-        
-        # Read output file
+
         with open(output_path, "rb") as f:
             output_content = f.read()
-        
-        # Cleanup
+
         cleanup_file(input_path)
         cleanup_file(output_path)
-        
+
         return StreamingResponse(
             io.BytesIO(output_content),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={
                 "Content-Disposition": f"attachment; filename={os.path.basename(file.filename).replace('.pdf', '.docx')}"
-            }
+            },
         )
     except Exception as e:
         cleanup_file(input_path)
         cleanup_file(output_path)
         logger.error(f"PDF to Word conversion error: {e}")
         raise HTTPException(status_code=500, detail=f"Conversion failed: {str(e)}")
+
 
 # ======== Lock file route ========
 @app.post("/lock")
@@ -338,4 +338,5 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
+
 
